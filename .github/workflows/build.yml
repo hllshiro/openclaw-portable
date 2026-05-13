@@ -274,33 +274,36 @@ jobs:
         with:
           path: artifacts
 
+      - name: Fetch upstream release body
+        id: upstream
+        run: |
+          BODY=$(curl -s https://api.github.com/repos/openclaw/openclaw/releases/tags/${{ inputs.tag }} \
+            | python3 -c "import sys,json; print(json.load(sys.stdin).get('body',''))" 2>/dev/null || echo "")
+          # Write to file to preserve multiline content
+          echo "$BODY" > upstream_body.txt
+          echo "Upstream body fetched."
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: "v${{ inputs.version }}"
           name: "OpenClaw Portable v${{ inputs.version }}"
           body: |
-            ## OpenClaw Portable v${{ inputs.version }}
+            > Based on upstream [openclaw/openclaw ${{ inputs.tag }}](https://github.com/openclaw/openclaw/releases/tag/${{ inputs.tag }})
 
-            Based on upstream [openclaw/openclaw ${{ inputs.tag }}](https://github.com/openclaw/openclaw/releases/tag/${{ inputs.tag }})
-
-            ### Downloads
+            ## Downloads
 
             | Platform | File |
             |----------|------|
             | Windows x64 | `openclaw-portable-win-x64-v${{ inputs.version }}.zip` |
             | Linux x64 | `openclaw-portable-linux-x64-v${{ inputs.version }}.tar.gz` |
 
-            ### Quick Start
+            ---
 
-            **Windows:** Extract → double-click `openclaw.bat`
-            **Linux:** `tar -xzf *.tar.gz && ./openclaw-portable-linux/openclaw.sh`
+            ${{ steps.upstream.outputs.tag != '' && format('> See upstream release notes: https://github.com/openclaw/openclaw/releases/tag/{0}', inputs.tag) || '' }}
 
-            ### No Dependencies Required
-            - ❌ No Node.js installation
-            - ❌ No Python installation
-            - ❌ No Docker
-            - ❌ No MSVC Build Tools
+            ---
+            ⚠️ This is an automated portable build. For full details, visit the [upstream release page](https://github.com/openclaw/openclaw/releases/tag/${{ inputs.tag }}).
           files: |
             artifacts/**/*.zip
             artifacts/**/*.tar.gz

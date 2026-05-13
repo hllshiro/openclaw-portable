@@ -13,6 +13,46 @@
 
 前往 [Releases](https://github.com/hllshiro/openclaw-portable/releases) 页面下载最新版本。
 
+---
+
+## 使用说明
+
+### Windows
+
+1. 下载 `openclaw-portable-win-x64-v*.zip`
+2. 解压到任意目录
+3. 打开命令提示符，进入解压目录
+
+```cmd
+# 首次设置（交互式向导）
+openclaw.bat onboard --install-daemon
+
+# 启动网关
+scripts\gateway.bat
+```
+
+### Linux
+
+1. 下载 `openclaw-portable-linux-x64-v*.tar.gz`
+2. 解压并进入目录
+
+```bash
+tar -xzf openclaw-portable-linux-x64-v*.tar.gz
+cd openclaw-portable-linux
+
+# 首次设置
+./openclaw.sh onboard --install-daemon
+
+# 启动网关
+./scripts/gateway.sh
+```
+
+### 更多用法
+
+请参考 OpenClaw 官方文档：https://docs.openclaw.ai/start/getting-started
+
+---
+
 ## 便携版特点
 
 - 无需安装 Node.js / Python / Docker
