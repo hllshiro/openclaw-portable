@@ -69,7 +69,7 @@ jobs:
           @("package.json", "openclaw.mjs", "pnpm-lock.yaml") | ForEach-Object {
             if (Test-Path $_) { Copy-Item $_ "$PortableDir\app\" -Force }
           }
-          @("skills", "scripts", "patches", "config") | ForEach-Object {
+          @("skills", "scripts", "patches", "config", "docs") | ForEach-Object {
             if (Test-Path $_) { Copy-Item $_ "$PortableDir\app\" -Recurse -Force }
           }
 
