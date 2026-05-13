@@ -158,6 +158,15 @@ jobs:
           @"
           @echo off
           title OpenClaw Setup
+
+          :: Auto-elevate to admin
+          net session >nul 2>&1
+          if %errorLevel% neq 0 (
+              echo Requesting administrator privileges...
+              powershell -Command "Start-Process '%~f0' -Verb RunAs"
+              exit /b
+          )
+
           set "SCRIPT_DIR=%~dp0"
           set "PATH=%SCRIPT_DIR%runtime\node;%PATH%"
           cd /d "%SCRIPT_DIR%app"
