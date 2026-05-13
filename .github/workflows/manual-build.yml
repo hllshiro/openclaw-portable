@@ -23,7 +23,7 @@ jobs:
       tag: ${{ steps.resolve.outputs.tag }}
       version: ${{ steps.resolve.outputs.version }}
     steps:
-      - name: Resolve target tag
+      - name: Resolve target tag and generate version
         id: resolve
         run: |
           TAG="${{ github.event.inputs.upstream_tag }}"
@@ -38,7 +38,11 @@ jobs:
             exit 1
           fi
 
-          VERSION="${TAG#v}"
+          # 使用 tag + 时间戳作为版本号
+          TIMESTAMP=$(date -u +%Y%m%d%H%M%S)
+          TAG_VERSION="${TAG#v}"
+          VERSION="${TAG_VERSION}-build.${TIMESTAMP}"
+
           echo "tag=$TAG" >> $GITHUB_OUTPUT
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Building: $TAG (version: $VERSION)"
