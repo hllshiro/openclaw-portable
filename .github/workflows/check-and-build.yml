@@ -3,12 +3,7 @@ name: Check upstream release
 on:
   schedule:
     - cron: '0 */2 * * *'  # Every 2 hours
-  workflow_dispatch:
-    inputs:
-      upstream_tag:
-        description: 'Force build this tag (leave empty to check latest)'
-        required: false
-        default: ''
+  # workflow_dispatch removed — use manual-build.yml instead
 
 permissions:
   contents: write
