@@ -44,15 +44,15 @@ jobs:
         working-directory: source
         run: pnpm install --frozen-lockfile
 
-      - name: Build UI assets
-        working-directory: source
-        run: pnpm ui:build
-
       - name: Build
         working-directory: source
         run: pnpm build:docker
         env:
           NODE_OPTIONS: "--max-old-space-size=8192"
+
+      - name: Build UI assets
+        working-directory: source
+        run: pnpm ui:build
 
       - name: Create portable package
         shell: pwsh
