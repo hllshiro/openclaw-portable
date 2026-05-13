@@ -1,0 +1,310 @@
+name: Build Portable Packages
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+      version:
+        required: true
+        type: string
+      node_version:
+        required: false
+        type: string
+        default: '24'
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Build Windows
+    runs-on: windows-latest
+    steps:
+      - name: Checkout upstream source
+        uses: actions/checkout@v4
+        with:
+          repository: openclaw/openclaw
+          ref: ${{ inputs.tag }}
+          path: source
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node_version }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: latest
+
+      - name: Install dependencies
+        working-directory: source
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        working-directory: source
+        run: pnpm build:docker
+        env:
+          NODE_OPTIONS: "--max-old-space-size=8192"
+
+      - name: Create portable package
+        shell: pwsh
+        working-directory: source
+        run: |
+          $Version = "${{ inputs.version }}"
+          $PortableDir = "openclaw-portable"
+
+          New-Item -ItemType Directory -Path "$PortableDir\runtime\node" -Force | Out-Null
+          New-Item -ItemType Directory -Path "$PortableDir\app\dist" -Force | Out-Null
+          New-Item -ItemType Directory -Path "$PortableDir\scripts" -Force | Out-Null
+          New-Item -ItemType Directory -Path "$PortableDir\runtime-deps" -Force | Out-Null
+
+          # Copy built app
+          if (Test-Path "dist") {
+            Copy-Item -Path "dist\*" -Destination "$PortableDir\app\dist" -Recurse -Force
+          }
+          @("package.json", "openclaw.mjs", "pnpm-lock.yaml") | ForEach-Object {
+            if (Test-Path $_) { Copy-Item $_ "$PortableDir\app\" -Force }
+          }
+          @("skills", "scripts", "patches", "config") | ForEach-Object {
+            if (Test-Path $_) { Copy-Item $_ "$PortableDir\app\" -Recurse -Force }
+          }
+
+          Write-Host "Application files copied."
+
+      - name: Download Node.js runtime
+        shell: bash
+        working-directory: source
+        run: |
+          NODE_VER=$(node -v | sed 's/v//')
+          echo "Downloading Node.js v$NODE_VER..."
+          curl -L -o node-win.zip "https://nodejs.org/dist/v${NODE_VER}/node-v${NODE_VER}-win-x64.zip"
+          unzip -q node-win.zip -d "openclaw-portable/runtime/temp"
+          mv "openclaw-portable/runtime/temp/node-v${NODE_VER}-win-x64/"* "openclaw-portable/runtime/node/"
+          rm -rf "openclaw-portable/runtime/temp" node-win.zip
+          echo "Node.js ready: $(openclaw-portable/runtime/node/node.exe --version)"
+
+      - name: Install production dependencies
+        shell: bash
+        working-directory: source
+        run: |
+          cd openclaw-portable/app
+          npm install --production --ignore-scripts 2>&1 || true
+          npm rebuild 2>&1 || true
+
+          echo "=== Verifying ==="
+          node -e "try{require('@lydell/node-pty');console.log('✅ node-pty')}catch(e){console.log('❌ node-pty: '+e.message)}" || true
+          node -e "try{require('sqlite-vec');console.log('✅ sqlite-vec')}catch(e){console.log('⚠️ sqlite-vec: '+e.message)}" || true
+
+          cd ../..
+
+      - name: Download VC++ Redistributable
+        shell: bash
+        working-directory: source
+        run: |
+          curl -L -o openclaw-portable/runtime-deps/vc_redist.x64.exe \
+            "https://aka.ms/vs/17/release/vc_redist.x64.exe"
+
+      - name: Create scripts
+        shell: pwsh
+        working-directory: source
+        run: |
+          $V = "${{ inputs.version }}"
+
+          @"
+          @echo off
+          title OpenClaw v$V
+          setlocal enabledelayedexpansion
+          set "SCRIPT_DIR=%~dp0"
+          set "RUNTIME=%SCRIPT_DIR%runtime\node"
+          set "APP=%SCRIPT_DIR%app"
+          net session >nul 2>&1
+          if !errorLevel! == 0 (
+              if not exist "%SystemRoot%\System32\vcruntime140.dll" (
+                  echo [OpenClaw] Installing VC++ Runtime...
+                  start /wait "%SCRIPT_DIR%runtime-deps\vc_redist.x64.exe" /install /quiet /norestart
+              )
+          ) else (
+              if not exist "%SystemRoot%\System32\vcruntime140.dll" (
+                  echo [OpenClaw] WARNING: VC++ Runtime not found. Run as admin to install.
+              )
+          )
+          set "PATH=%RUNTIME%;%PATH%"
+          cd /d "%APP%"
+          "%RUNTIME%\node.exe" openclaw.mjs %*
+          if !errorLevel! neq 0 (
+              echo.
+              echo [OpenClaw] Error occurred. Press any key to exit...
+              pause >nul
+          )
+          "@ | Out-File "openclaw-portable\openclaw.bat" -Encoding ASCII
+
+          @"
+          @echo off
+          title OpenClaw Gateway
+          set "SCRIPT_DIR=%~dp0"
+          set "PATH=%SCRIPT_DIR%runtime\node;%PATH%"
+          cd /d "%SCRIPT_DIR%app"
+          "%SCRIPT_DIR%runtime\node\node.exe" openclaw.mjs gateway --port 18789 --verbose
+          "@ | Out-File "openclaw-portable\scripts\gateway.bat" -Encoding ASCII
+
+          @"
+          @echo off
+          title OpenClaw Setup
+          set "SCRIPT_DIR=%~dp0"
+          set "PATH=%SCRIPT_DIR%runtime\node;%PATH%"
+          cd /d "%SCRIPT_DIR%app"
+          "%SCRIPT_DIR%runtime\node\node.exe" openclaw.mjs onboard --install-daemon
+          pause
+          "@ | Out-File "openclaw-portable\scripts\onboard.bat" -Encoding ASCII
+
+      - name: Create zip
+        shell: bash
+        working-directory: source
+        run: |
+          ZIP="openclaw-portable-win-x64-v${{ inputs.version }}.zip"
+          7z a -tzip "$ZIP" openclaw-portable/* -mx=7
+          ls -lh "$ZIP"
+          echo "$ZIP" > ../artifact-win.txt
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: source/openclaw-portable-win-x64-*.zip
+          retention-days: 5
+
+  build-linux:
+    name: Build Linux
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout upstream source
+        uses: actions/checkout@v4
+        with:
+          repository: openclaw/openclaw
+          ref: ${{ inputs.tag }}
+          path: source
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node_version }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: latest
+
+      - name: Install dependencies
+        working-directory: source
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        working-directory: source
+        run: pnpm build:docker
+
+      - name: Create portable package
+        shell: bash
+        working-directory: source
+        run: |
+          DIR="openclaw-portable-linux"
+          NODE_VER=$(node -v | sed 's/v//')
+
+          mkdir -p "$DIR/app" "$DIR/scripts"
+
+          # Node.js runtime
+          curl -L -o node-linux.tar.gz "https://nodejs.org/dist/v${NODE_VER}/node-v${NODE_VER}-linux-x64.tar.gz"
+          tar -xzf node-linux.tar.gz -C "$DIR"
+          mv "$DIR/node-v${NODE_VER}-linux-x64" "$DIR/runtime"
+          rm node-linux.tar.gz
+
+          # App files
+          cp -r dist "$DIR/app/" 2>/dev/null || true
+          cp package.json openclaw.mjs "$DIR/app/"
+          cp -r skills scripts patches config "$DIR/app/" 2>/dev/null || true
+
+          # Prod deps
+          cd "$DIR/app"
+          npm install --production --ignore-scripts 2>&1 || true
+          npm rebuild 2>&1 || true
+          cd ../..
+
+          # Scripts
+          cat > "$DIR/openclaw.sh" << 'EOF'
+          #!/bin/bash
+          DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+          export PATH="$DIR/runtime/bin:$PATH"
+          cd "$DIR/app"
+          node openclaw.mjs "$@"
+          EOF
+          chmod +x "$DIR/openclaw.sh"
+
+          cat > "$DIR/scripts/gateway.sh" << 'EOF'
+          #!/bin/bash
+          DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/.."
+          export PATH="$DIR/runtime/bin:$PATH"
+          cd "$DIR/app"
+          node openclaw.mjs gateway --port 18789 --verbose
+          EOF
+          chmod +x "$DIR/scripts/gateway.sh"
+
+          TARBALL="openclaw-portable-linux-x64-v${{ inputs.version }}.tar.gz"
+          tar -czf "$TARBALL" "$DIR"
+          ls -lh "$TARBALL"
+          echo "$TARBALL" > ../artifact-linux.txt
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: source/openclaw-portable-linux-x64-*.tar.gz
+          retention-days: 5
+
+  release:
+    name: Publish release
+    needs: [build-windows, build-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "v${{ inputs.version }}"
+          name: "OpenClaw Portable v${{ inputs.version }}"
+          body: |
+            ## OpenClaw Portable v${{ inputs.version }}
+
+            Based on upstream [openclaw/openclaw ${{ inputs.tag }}](https://github.com/openclaw/openclaw/releases/tag/${{ inputs.tag }})
+
+            ### Downloads
+
+            | Platform | File |
+            |----------|------|
+            | Windows x64 | `openclaw-portable-win-x64-v${{ inputs.version }}.zip` |
+            | Linux x64 | `openclaw-portable-linux-x64-v${{ inputs.version }}.tar.gz` |
+
+            ### Quick Start
+
+            **Windows:** Extract → double-click `openclaw.bat`
+            **Linux:** `tar -xzf *.tar.gz && ./openclaw-portable-linux/openclaw.sh`
+
+            ### No Dependencies Required
+            - ❌ No Node.js installation
+            - ❌ No Python installation
+            - ❌ No Docker
+            - ❌ No MSVC Build Tools
+          files: |
+            artifacts/**/*.zip
+            artifacts/**/*.tar.gz
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
